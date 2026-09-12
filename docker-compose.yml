@@ -1,0 +1,119 @@
+name: bill-system
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: bill_root_dev_only
+      MYSQL_USER: bill
+      MYSQL_PASSWORD: bill_dev_only
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - bill-mysql:/var/lib/mysql
+      - ./scripts/mysql-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - bill-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: inventory-service/Dockerfile
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/bill_inventory?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      DB_USER: bill
+      DB_PASSWORD: bill_dev_only
+    ports:
+      - "127.0.0.1:8786:8786"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8786/actuator/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: payment-service/Dockerfile
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/bill_payment?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      DB_USER: bill
+      DB_PASSWORD: bill_dev_only
+    ports:
+      - "127.0.0.1:8787:8787"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8787/actuator/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  order-service:
+    build:
+      context: .
+      dockerfile: order-service/Dockerfile
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/bill_order?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      DB_USER: bill
+      DB_PASSWORD: bill_dev_only
+      REDIS_HOST: redis
+      INVENTORY_URL: http://inventory-service:8786
+      PAYMENT_URL: http://payment-service:8787
+      PUBLIC_ORDER_URL: http://order-service:8785
+      RATE_LIMIT_PER_SECOND: 50
+    ports:
+      - "127.0.0.1:8785:8785"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8785/actuator/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  web:
+    build:
+      context: ./web
+    ports:
+      - "127.0.0.1:3100:80"
+    depends_on:
+      order-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  bill-mysql:
+  bill-redis:

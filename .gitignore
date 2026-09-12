@@ -1,0 +1,12 @@
+.idea/
+.vscode/
+**/target/
+web/node_modules/
+web/dist/
+.run/
+*.log
+.env
+docker-data/
+playwright-report/
+test-results/
+tests/results/*.json

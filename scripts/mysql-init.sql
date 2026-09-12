@@ -1,0 +1,8 @@
+CREATE DATABASE IF NOT EXISTS bill_order CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE DATABASE IF NOT EXISTS bill_inventory CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE DATABASE IF NOT EXISTS bill_payment CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+GRANT ALL PRIVILEGES ON bill_order.* TO 'bill'@'%';
+GRANT ALL PRIVILEGES ON bill_inventory.* TO 'bill'@'%';
+GRANT ALL PRIVILEGES ON bill_payment.* TO 'bill'@'%';
+FLUSH PRIVILEGES;
+

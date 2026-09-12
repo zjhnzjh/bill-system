@@ -1,0 +1,23 @@
+server:
+  port: 8787
+spring:
+  application:
+    name: payment-service
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/bill_payment?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+    username: ${DB_USER:bill}
+    password: ${DB_PASSWORD:bill_dev_only}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+

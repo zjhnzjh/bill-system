@@ -1,0 +1,11 @@
+scenario,mechanism,automated_evidence,result,boundary
+Concurrent idempotency,"fingerprint; keyed lock; unique index","20 concurrent requests; one unique order id",PASS,"single service instance plus database fallback"
+Inventory failure,"fault injection; explicit state","failure does not create payment or consume stock",PASS,"simulated fault"
+Inventory timeout,"1200 ms read timeout","2500 ms injected delay fails around 1.2 s",PASS,"local network"
+Last-stock race,"pessimistic row lock","10 contenders; exactly one success",PASS,"single MySQL node"
+Duplicate callback,"order state machine","second callback leaves PAID unchanged",PASS,"simulated payment"
+Lost callback,"persistent recovery job; reconciliation","PENDING_PAYMENT converges to PAID",PASS,"poll-based job runner"
+Repeated job failure,"exponential retry; dead letter; manual retry","3 failures to DEAD_LETTER; retry recovers",PASS,"single runner instance"
+Traffic spike,"Redis fixed-window limit","80 concurrent; 50 pass; 30 HTTP 429",PASS,"per-client one-second window"
+Payment outage,"Resilience4j circuit breaker; bulkhead","4 failures open circuit; next call short-circuited",PASS,"in-process circuit state"
+Cancel and refund,"Saga-style compensation","inventory released; payment and order agree",PASS,"no real payment provider"

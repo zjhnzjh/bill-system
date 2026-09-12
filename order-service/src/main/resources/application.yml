@@ -1,0 +1,49 @@
+server:
+  port: 8785
+spring:
+  application:
+    name: order-service
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/bill_order?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+    username: ${DB_USER:bill}
+    password: ${DB_PASSWORD:bill_dev_only}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+services:
+  inventory-url: ${INVENTORY_URL:http://127.0.0.1:8786}
+  payment-url: ${PAYMENT_URL:http://127.0.0.1:8787}
+  public-order-url: ${PUBLIC_ORDER_URL:http://127.0.0.1:8785}
+reliability:
+  rate-limit-per-second: ${RATE_LIMIT_PER_SECOND:50}
+resilience4j:
+  circuitbreaker:
+    instances:
+      payment:
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 4
+        minimumNumberOfCalls: 4
+        failureRateThreshold: 50
+        permittedNumberOfCallsInHalfOpenState: 2
+        waitDurationInOpenState: 5s
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        eventConsumerBufferSize: 20
+  bulkhead:
+    instances:
+      payment:
+        maxConcurrentCalls: 8
+        maxWaitDuration: 0
