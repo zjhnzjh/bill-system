@@ -77,8 +77,7 @@ Relay 在“Broker 已确认、数据库尚未标记”窗口宕机会重发，�
 
 ## 7. 验收入口
 
-- 全量：`verify.cmd`
-- 仅 v0.3.1：`verify-v0.3.1.cmd`
+- 当前唯一全量入口：`verify-v0.3.1.cmd`，依次运行核心可靠性、三端联动与 Kafka 异步验收。
 - 同步压测：`load-test.cmd`
 - 异步受理压测：`load-test-kafka.cmd`
 - 演示复位：`reset-demo.cmd`
