@@ -47,6 +47,7 @@ start.cmd
 
 ## 面试入口
 
+- [v0.3.1 面试技术展陈规划（待决策）](BILL_SYSTEM_V0.3.1.md)
 - [v0.2 当前目标与验收基准](BILL_SYSTEM_V0.2.md)
 - [v0.2 实现 Review](docs/REVIEW_V0.2.0.md)
 - [v0.1 原始目标与证据边界](BILL_SYSTEM_V0.1.md)
