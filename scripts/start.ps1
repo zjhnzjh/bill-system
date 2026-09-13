@@ -1,14 +1,18 @@
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 
-$requiredPorts = @(3100, 8785, 8786, 8787, 3306, 6379)
-$requiredServices = @('mysql', 'redis', 'inventory-service', 'payment-service', 'order-service', 'web')
+$requiredPorts = @(3100, 8785, 8786, 8787, 3306, 6379, 9092)
+$requiredServices = @('mysql', 'redis', 'kafka', 'inventory-service', 'payment-service', 'order-service', 'web')
 
 function Test-BillHealth {
     try {
         $web = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:3100/' -TimeoutSec 2
         $order = Invoke-RestMethod -Uri 'http://127.0.0.1:8785/actuator/health' -TimeoutSec 2
-        return $web.StatusCode -eq 200 -and $order.status -eq 'UP'
+        $inventory = Invoke-RestMethod -Uri 'http://127.0.0.1:8786/actuator/health' -TimeoutSec 2
+        $payment = Invoke-RestMethod -Uri 'http://127.0.0.1:8787/actuator/health' -TimeoutSec 2
+        $kafka = Invoke-RestMethod -Uri 'http://127.0.0.1:8785/api/async-orders/metrics' -TimeoutSec 3
+        return $web.StatusCode -eq 200 -and $order.status -eq 'UP' -and
+            $inventory.status -eq 'UP' -and $payment.status -eq 'UP' -and $kafka.broker -eq 'UP'
     } catch {
         return $false
     }
@@ -44,7 +48,7 @@ if ($running.Count -eq 0) {
 
 Write-Host ''
 Write-Host '  Bill System - Transaction Reliability Lab' -ForegroundColor Cyan
-Write-Host '  Building and starting MySQL, Redis, three services, and the React console.' -ForegroundColor DarkGray
+Write-Host '  Building and starting MySQL, Redis, Kafka, three services, and the React console.' -ForegroundColor DarkGray
 Write-Host ''
 
 docker compose up -d --build

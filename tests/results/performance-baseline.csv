@@ -1,2 +1,3 @@
 version,date,duration_seconds,max_vus,requests,throughput_rps,error_rate,check_rate,p50_ms,p90_ms,p95_ms,p99_ms,max_ms
 v0.1,2026-09-13,40,20,1804,45.04,0,1,139.00,272.14,286.99,344.64,366.53
+v0.3.1-async-admission,2026-09-13,40,20,4254,106.18,0,1,33.31,49.36,56.12,83.05,149.63

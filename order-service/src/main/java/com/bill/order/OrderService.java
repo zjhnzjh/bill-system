@@ -22,17 +22,19 @@ public class OrderService {
     private final RecoveryJobRepository jobs;
     private final String publicOrderUrl;
     private final TransactionTemplate transactions;
+    private final LiveEventSocket liveEvents;
     private final ConcurrentHashMap<String, Object> idempotencyLocks = new ConcurrentHashMap<>();
 
     public OrderService(OrderRepository orders, TraceEventRepository traces, DownstreamClients downstream,
                         RecoveryJobRepository jobs,
-                        TransactionTemplate transactions,
+                        TransactionTemplate transactions, LiveEventSocket liveEvents,
                         @Value("${services.public-order-url:http://order-service:8785}") String publicOrderUrl) {
         this.orders = orders;
         this.traces = traces;
         this.downstream = downstream;
         this.jobs = jobs;
         this.transactions = transactions;
+        this.liveEvents = liveEvents;
         this.publicOrderUrl = publicOrderUrl;
     }
 
@@ -42,8 +44,10 @@ public class OrderService {
         Object lock = idempotencyLocks.computeIfAbsent(idempotencyKey, ignored -> new Object());
         synchronized (lock) {
             try {
-                return transactions.execute(ignored -> createInTransaction(
+                BillOrder result = transactions.execute(ignored -> createInTransaction(
                         idempotencyKey, fingerprint, userId, sku, quantity, amount, traceId));
+                liveEvents.publish("ORDER_STATE_CHANGED", "ORDER", result.getId(), result.getTraceId(), "status=" + result.getStatus());
+                return result;
             } catch (DataIntegrityViolationException race) {
                 var winner = orders.findByIdempotencyKey(idempotencyKey).orElseThrow(() -> race);
                 ensureSameFingerprint(winner, fingerprint);
@@ -114,6 +118,7 @@ public class OrderService {
         }
         order.transition(OrderStatus.PAID);
         record(correlatedTrace, "payment.callback", "OK", 0, paymentId);
+        liveEvents.publish("ORDER_STATE_CHANGED", "ORDER", order.getId(), correlatedTrace, "status=PAID");
         return order;
     }
 
@@ -142,6 +147,7 @@ public class OrderService {
             jobs.findByOrderIdAndJobType(orderId, "PAYMENT_RECONCILE")
                     .orElseGet(() -> jobs.save(new RecoveryJob(orderId, "PAYMENT_RECONCILE", correlatedTrace)));
         }
+        liveEvents.publish("PAYMENT_FACT_CHANGED", "ORDER", orderId, correlatedTrace, "callbackDropped=" + dropCallback);
         return get(orderId);
     }
 
@@ -160,6 +166,7 @@ public class OrderService {
         downstream.release(orderId, order.getTraceId());
         order.transition(OrderStatus.CANCELLED);
         record(order.getTraceId(), "order.cancel.inventory.release", "OK", elapsed(started), orderId);
+        liveEvents.publish("ORDER_STATE_CHANGED", "ORDER", order.getId(), order.getTraceId(), "status=CANCELLED");
         return order;
     }
 
@@ -175,6 +182,7 @@ public class OrderService {
         downstream.release(orderId, order.getTraceId());
         order.transition(OrderStatus.REFUNDED);
         record(order.getTraceId(), "order.refund.compensation", "OK", elapsed(started), order.getPaymentId());
+        liveEvents.publish("ORDER_STATE_CHANGED", "ORDER", order.getId(), order.getTraceId(), "status=REFUNDED");
         return order;
     }
 

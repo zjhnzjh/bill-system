@@ -15,6 +15,18 @@ spring:
     redis:
       host: ${REDIS_HOST:127.0.0.1}
       port: ${REDIS_PORT:6379}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:127.0.0.1:9092}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+    consumer:
+      group-id: order-create-v1
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+    listener:
+      ack-mode: record
 management:
   endpoints:
     web:
@@ -30,6 +42,9 @@ services:
   public-order-url: ${PUBLIC_ORDER_URL:http://127.0.0.1:8785}
 reliability:
   rate-limit-per-second: ${RATE_LIMIT_PER_SECOND:50}
+kafka-demo:
+  relay-delay-ms: ${OUTBOX_RELAY_DELAY_MS:250}
+  consumer-delay-ms: ${KAFKA_CONSUMER_DELAY_MS:0}
 resilience4j:
   circuitbreaker:
     instances:

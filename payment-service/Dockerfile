@@ -12,6 +12,6 @@ RUN --mount=type=cache,target=/root/.m2,sharing=locked \
 
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
-COPY --from=build /workspace/payment-service/target/payment-service-0.2.0-SNAPSHOT.jar app.jar
+COPY --from=build /workspace/payment-service/target/payment-service-0.3.1-SNAPSHOT.jar app.jar
 EXPOSE 8787
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=65", "-jar", "/app/app.jar"]

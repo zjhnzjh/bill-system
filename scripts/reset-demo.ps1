@@ -10,5 +10,7 @@ Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8786/api/inventory/faults'
 Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8787/api/payments/faults' -ContentType 'application/json' `
     -Body (@{ failNextQueries = 0; failNextCalls = 0 } | ConvertTo-Json) | Out-Null
 Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8785/api/reliability/circuit-breakers/payment/reset' | Out-Null
+Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8785/api/async-orders/faults?failNext=0&delayMs=0' | Out-Null
+Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8785/api/async-orders/consumer/resume' | Out-Null
 
-Write-Host 'Demo data, fault switches, and circuit breaker were reset.' -ForegroundColor Green
+Write-Host 'Demo data, Kafka consumer, fault switches, and circuit breaker were reset.' -ForegroundColor Green

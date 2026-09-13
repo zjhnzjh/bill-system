@@ -1,6 +1,6 @@
 # Bill System
 
-生活服务交易可靠性与测试演示平台。v0.2 的三个实时联动界面、真实数据后台和自动验收已经完成，范围与证据见 [Bill System v0.2 目标规划](BILL_SYSTEM_V0.2.md) 与 [v0.2 实现 Review](docs/REVIEW_V0.2.0.md)。
+生活服务交易可靠性与测试演示平台。当前已完成 v0.3.1 方案 A：在 v0.2 三端联动和同步可靠性基线上，增加真实 Kafka、事务 Outbox、幂等消费、有限重试、DLQ、Lag 实验和业务事件 WebSocket。实现证据见 [v0.3.1 Review](docs/REVIEW_V0.3.1.md)。
 
 ## 启动
 
@@ -14,16 +14,29 @@ start.cmd
 
 启动器会固定检查端口、构建容器、等待健康检查并打开 <http://127.0.0.1:3100>。停止全部容器使用 `stop.cmd`。
 
-启动后双击 `verify.cmd` 会先回归 v0.1 九类可靠性场景，再执行 v0.2 三端联动验收；只验收 v0.2 可双击 `verify-v0.2.cmd`。`load-test.cmd` 使用 k6 做阶梯加压。
+启动后双击 `verify.cmd` 会依次回归 v0.1、v0.2 和 v0.3.1；只验收 Kafka 增量可双击 `verify-v0.3.1.cmd`。`load-test.cmd` 测同步完整订单，`load-test-kafka.cmd` 测异步入口 202 受理延迟。
 练习或测试后双击 `reset-demo.cmd`，可只清空本项目的模拟交易数据并恢复三种测试库存。
 
-## v0.2 三个页面
+## 三个页面
 
 - 客户端：<http://127.0.0.1:3100/client>
 - 服务端运维台：<http://127.0.0.1:3100/operations>
 - 数据库操作台：<http://127.0.0.1:3100/database>
 
-三个页面通过 WebSocket 接收刷新通知，业务数据仍以三个 MySQL Schema 中的真实记录为准。数据库操作台不提供任意 SQL，而是通过 Inventory/Payment Service 的受控 Admin API 修改数据并追加审计记录。
+三个页面通过版本化 WebSocket 业务事件联动，业务数据仍以三个 MySQL Schema 中的真实记录为准。运维台提供 Kafka Lab，数据库台展示异步请求、Outbox 和消息消费证据；后台不提供任意 SQL，只通过受控 Admin API 修改并审计。
+
+## v0.3.1 方案 A 已实现并验证
+
+- Kafka 4.1.2 单 Broker KRaft，命令 Topic 三分区、三并发消费者；
+- HTTP 202 异步受理，`order_requests` 与 `outbox_events` 同事务落库；
+- Outbox Relay 保存发布状态、Partition 和 Offset；
+- 至少一次投递下的业务幂等，重复消息可见但业务只执行一次；
+- 技术错误有限重试三次、DLQ 与人工回放；业务拒绝不盲目重试；
+- 消费暂停、Lag/分区水位、Outbox Pending、积压年龄和恢复排空；
+- 异步订单继续复用库存、支付、Trace、Job Runner 与最终一致性；
+- WebSocket 由定时全量刷新升级为真实业务事件，带 eventId、sequence 和 payloadVersion；
+- v0.3.1 八道 Kafka Gate、v0.2 六道 Gate、v0.1 九类场景全部通过；
+- k6 40 秒异步受理基线：4254 请求、106.18 req/s、P95 56.12 ms、错误率 0%。
 
 ## v0.2 已实现并验证
 
@@ -47,7 +60,11 @@ start.cmd
 
 ## 面试入口
 
-- [v0.3.1 面试技术展陈规划（待决策）](BILL_SYSTEM_V0.3.1.md)
+- [v0.3.1 冻结范围与验收基准](BILL_SYSTEM_V0.3.1.md)
+- [v0.3.1 实现 Review](docs/REVIEW_V0.3.1.md)
+- [v0.3.1 架构说明](docs/ARCHITECTURE_V0.3.1.md)
+- [v0.3.1 面试演示手册](docs/INTERVIEW_DEMO_V0.3.1.md)
+- [v0.3.1 同步/异步性能基线](docs/PERFORMANCE_BASELINE_V0.3.1.md)
 - [v0.2 当前目标与验收基准](BILL_SYSTEM_V0.2.md)
 - [v0.2 实现 Review](docs/REVIEW_V0.2.0.md)
 - [v0.1 原始目标与证据边界](BILL_SYSTEM_V0.1.md)
@@ -59,4 +76,4 @@ start.cmd
 
 ## 真实性边界
 
-这是单机、单实例、本地 Demo，不处理真实支付或真实用户数据。九场景证据来自本机 Docker 环境的接口、并发和故障恢复验收；它不等于生产容量结论。已完成一轮参数完整的本地 k6 基线压测，但不可把这组结果外推为线上容量。Web 自动化和多实例一致性验证属于下一阶段。
+这是单机、本地 Demo，不处理真实支付或真实用户数据。Kafka 为单 Broker，不能证明 Broker 高可用；MySQL 是单容器多 Schema，不能宣传跨集群；202 受理性能不等于订单最终完成性能。Seata XA 为 `DESIGN_ONLY`，不在 v0.3.1 方案 A 的已实现范围。全部性能结论只适用于本机 Docker 环境，不能外推为线上容量或 SLA。

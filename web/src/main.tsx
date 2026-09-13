@@ -15,6 +15,12 @@ type Payment = { id: string; orderId: string; amount: number; status: string; cr
 type Audit = { id: number; sku?: string; paymentId?: string; orderId?: string; action: string; operatorName: string; detail: string; occurredAt: string };
 type Circuit = { state: string; bufferedCalls: number; failedCalls: number; notPermittedCalls: number; failureRate: number };
 type FaultState = Record<string, number>;
+type AsyncRequest = { id: string; idempotencyKey: string; userId: string; sku: string; quantity: number; amount: number; traceId: string; status: string; orderId?: string; lastError?: string; topic?: string; kafkaPartition?: number; kafkaOffset?: number; receivedCount: number; businessExecutions: number; acceptedAt: string; processingAt?: string; completedAt?: string; updatedAt: string };
+type OutboxEvent = { id: string; aggregateId: string; topic: string; messageKey: string; status: string; publishAttempts: number; kafkaPartition?: number; kafkaOffset?: number; lastError?: string; createdAt: string; publishedAt?: string };
+type KafkaDelivery = { id: number; requestId: string; topic: string; kafkaPartition: number; kafkaOffset: number; attempt: number; outcome: string; detail: string; occurredAt: string };
+type PartitionMetric = { partition: number; endOffset: number; committedOffset: number; lag: number };
+type KafkaMetrics = { broker: string; topic: string; consumerGroup: string; partitions: number; logEndOffset: number; committedOffset: number; lag: number; partitionDetails?: PartitionMetric[]; accepted: number; queued: number; processing: number; succeeded: number; rejected: number; deadLetter: number; outboxPending: number; outboxPublished: number; deliveries: number; duplicates: number; consumerPaused: boolean; consumerDelayMs: number; webSocketConnections: number; lastEventSequence: number; oldestQueueAgeMs: number; measuredAt: string; error?: string };
+type LiveEvent = { eventId: string; sequence: number; eventType: string; aggregateType: string; aggregateId?: string; occurredAt: string; traceId?: string; payloadVersion: number; detail?: string };
 type View = "client" | "operations" | "database";
 
 const DEMO_SKU = "LIFE-DEMO-001";
@@ -49,7 +55,13 @@ function useLiveData() {
   const [circuit, setCircuit] = useState<Circuit | null>(null);
   const [inventoryFaults, setInventoryFaults] = useState<FaultState>({});
   const [paymentFaults, setPaymentFaults] = useState<FaultState>({});
-  const [health, setHealth] = useState<Record<string, boolean>>({ order: false, inventory: false, payment: false });
+  const [asyncRequests, setAsyncRequests] = useState<AsyncRequest[]>([]);
+  const [outboxEvents, setOutboxEvents] = useState<OutboxEvent[]>([]);
+  const [kafkaDeliveries, setKafkaDeliveries] = useState<KafkaDelivery[]>([]);
+  const [kafkaMetrics, setKafkaMetrics] = useState<KafkaMetrics | null>(null);
+  const [kafkaFaults, setKafkaFaults] = useState<Record<string, number | boolean>>({});
+  const [lastEvent, setLastEvent] = useState<LiveEvent | null>(null);
+  const [health, setHealth] = useState<Record<string, boolean>>({ order: false, inventory: false, payment: false, kafka: false });
   const [socketState, setSocketState] = useState<"connected" | "reconnecting" | "offline">("reconnecting");
   const [lastSync, setLastSync] = useState<Date | null>(null);
 
@@ -61,6 +73,8 @@ function useLiveData() {
       api<Audit[]>("/payment-api/admin/audits"), api<Circuit>("/api/reliability/circuit-breakers/payment"),
       api<FaultState>("/inventory-api/faults"), api<FaultState>("/payment-api/faults"),
       api<{ status: string }>("/order-health"), api<{ status: string }>("/inventory-health"), api<{ status: string }>("/payment-health"),
+      api<AsyncRequest[]>("/api/async-orders"), api<OutboxEvent[]>("/api/async-orders/outbox/all"),
+      api<KafkaDelivery[]>("/api/async-orders/deliveries/all"), api<KafkaMetrics>("/api/async-orders/metrics"), api<Record<string, number | boolean>>("/api/async-orders/faults"),
     ]);
     const value = <T,>(index: number): T | undefined => results[index].status === "fulfilled" ? (results[index] as PromiseFulfilledResult<unknown>).value as T : undefined;
     const nextOrders = value<Order[]>(0); if (nextOrders) setOrders(nextOrders);
@@ -73,7 +87,12 @@ function useLiveData() {
     const nextCircuit = value<Circuit>(7); if (nextCircuit) setCircuit(nextCircuit);
     const nextInventoryFaults = value<FaultState>(8); if (nextInventoryFaults) setInventoryFaults(nextInventoryFaults);
     const nextPaymentFaults = value<FaultState>(9); if (nextPaymentFaults) setPaymentFaults(nextPaymentFaults);
-    setHealth({ order: value<{ status: string }>(10)?.status === "UP", inventory: value<{ status: string }>(11)?.status === "UP", payment: value<{ status: string }>(12)?.status === "UP" });
+    const nextAsync = value<AsyncRequest[]>(13); if (nextAsync) setAsyncRequests(nextAsync);
+    const nextOutbox = value<OutboxEvent[]>(14); if (nextOutbox) setOutboxEvents(nextOutbox);
+    const nextDeliveries = value<KafkaDelivery[]>(15); if (nextDeliveries) setKafkaDeliveries(nextDeliveries);
+    const nextMetrics = value<KafkaMetrics>(16); if (nextMetrics) setKafkaMetrics(nextMetrics);
+    const nextKafkaFaults = value<Record<string, number | boolean>>(17); if (nextKafkaFaults) setKafkaFaults(nextKafkaFaults);
+    setHealth({ order: value<{ status: string }>(10)?.status === "UP", inventory: value<{ status: string }>(11)?.status === "UP", payment: value<{ status: string }>(12)?.status === "UP", kafka: nextMetrics?.broker === "UP" });
     setLastSync(new Date());
   }, []);
 
@@ -87,7 +106,7 @@ function useLiveData() {
       const protocol = location.protocol === "https:" ? "wss" : "ws";
       socket = new WebSocket(`${protocol}://${location.host}/ws/events`);
       socket.onopen = () => setSocketState("connected");
-      socket.onmessage = () => refresh();
+      socket.onmessage = event => { try { const live = JSON.parse(event.data) as LiveEvent; setLastEvent(live); if (live.eventType !== "HEARTBEAT") refresh(); } catch { refresh(); } };
       socket.onerror = () => setSocketState("offline");
       socket.onclose = () => { if (!closed) { setSocketState("reconnecting"); reconnect = window.setTimeout(connect, 1500); } };
     };
@@ -95,7 +114,7 @@ function useLiveData() {
     return () => { closed = true; if (reconnect) clearTimeout(reconnect); socket?.close(); };
   }, [refresh]);
 
-  return { orders, jobs, items, reservations, payments, inventoryAudits, paymentAudits, circuit, inventoryFaults, paymentFaults, health, socketState, lastSync, refresh };
+  return { orders, jobs, items, reservations, payments, inventoryAudits, paymentAudits, circuit, inventoryFaults, paymentFaults, asyncRequests, outboxEvents, kafkaDeliveries, kafkaMetrics, kafkaFaults, lastEvent, health, socketState, lastSync, refresh };
 }
 type LiveData = ReturnType<typeof useLiveData>;
 
@@ -108,18 +127,18 @@ function Shell({ view, data, children }: { view: View; data: LiveData; children:
   };
   return <div className="shell">
     <aside>
-      <div className="brand"><span>B</span><div><strong>Bill System</strong><small>v0.2 面试展示版</small></div></div>
+      <div className="brand"><span>B</span><div><strong>Bill System</strong><small>v0.3.1 Kafka 面试版</small></div></div>
       <nav>
         <a className={view === "client" ? "active" : ""} href="/client"><i>01</i><span>客户端<small>下单与支付</small></span></a>
         <a className={view === "operations" ? "active" : ""} href="/operations"><i>02</i><span>服务端运维台<small>Trace 与 Jobs</small></span></a>
         <a className={view === "database" ? "active" : ""} href="/database"><i>03</i><span>数据库操作台<small>真实表与审计</small></span></a>
       </nav>
-      <div className="boundary"><b>演示边界</b><p>模拟支付 · 本地单实例<br />受控后台操作 · 无真实用户</p></div>
+      <div className="boundary"><b>演示边界</b><p>Kafka 单 Broker · 模拟支付<br />本地单实例 · 非生产 SLA</p></div>
     </aside>
     <main>
       <header>
         <div><p className="eyebrow">LIFE SERVICE COMMERCE · {view.toUpperCase()}</p><h1>{titles[view][0]}</h1><p>{titles[view][1]}</p></div>
-        <div className="live-cluster"><span className={`socket ${data.socketState}`}><i></i>{data.socketState === "connected" ? "WebSocket 已连接" : data.socketState === "reconnecting" ? "正在重连" : "连接异常"}</span><span className="health"><i></i>{healthy} / 3 服务在线</span><small>同步 {data.lastSync?.toLocaleTimeString("zh-CN", { hour12: false }) || "—"}</small></div>
+        <div className="live-cluster"><span className={`socket ${data.socketState}`}><i></i>{data.socketState === "connected" ? "WebSocket 已连接" : data.socketState === "reconnecting" ? "正在重连" : "连接异常"}</span><span className="health"><i></i>{healthy} / 4 核心组件在线</span><small>{data.lastEvent ? `#${data.lastEvent.sequence} ${data.lastEvent.eventType}` : "等待业务事件"} · 同步 {data.lastSync?.toLocaleTimeString("zh-CN", { hour12: false }) || "—"}</small></div>
       </header>
       {children}
     </main>
@@ -137,6 +156,31 @@ function OrderStateMachine({ status }: { status: string }) {
     <div className="state-path main-path">{mainPath.map((state, index) => <Fragment key={state}><div className={status === state ? "current" : mainIndex > index ? "passed" : ""}><i></i><b>{state}</b></div>{index < mainPath.length - 1 && <span>→</span>}</Fragment>)}</div>
     <div className="state-path exception-path"><small>任一步骤异常 / 补偿 →</small>{exceptionPath.map(state => <div key={state} className={status === state ? "current" : ""}><i></i><b>{state}</b></div>)}</div>
   </div>;
+}
+
+function AsyncCheckout({ data }: { data: LiveData }) {
+  const [key, setKey] = useState<string>(() => crypto.randomUUID());
+  const [selectedId, setSelectedId] = useState("");
+  const [message, setMessage] = useState("异步入口先返回 202 ACCEPTED，随后由 Outbox 与 Kafka 完成订单。");
+  const [busy, setBusy] = useState(false);
+  const selected = data.asyncRequests.find(value => value.id === selectedId) || data.asyncRequests[0];
+  const evidence = selected ? data.kafkaDeliveries.filter(value => value.requestId === selected.id).slice().reverse() : [];
+  async function accept(reuse = false) {
+    setBusy(true);
+    try {
+      const request = await api<AsyncRequest>("/api/async-orders", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": reuse && selected ? selected.idempotencyKey : key }, body: JSON.stringify({ userId: "interview-user", sku: DEMO_SKU, quantity: 1, amount: 39.9 }) });
+      setSelectedId(request.id); setMessage(`网关已受理 ${short(request.id)}：HTTP 202，不等待下游完成。`);
+      if (!reuse) setKey(crypto.randomUUID());
+      await data.refresh();
+    } catch (error) { setMessage((error as Error).message); }
+    finally { setBusy(false); }
+  }
+  return <section className="panel async-checkout">
+    <div className="panel-title"><div><p>KAFKA PEAK ENTRY</p><h2>异步削峰下单</h2></div><span className="tag">202 → OUTBOX → KAFKA → CONSUMER</span></div>
+    <div className="async-layout"><div><label>异步幂等键<input value={key} onChange={event => setKey(event.target.value)} /></label><div className="actions"><button className="primary" disabled={busy} onClick={() => accept(false)}>异步受理订单</button><button disabled={!selected || busy} onClick={() => accept(true)}>重放受理请求</button></div><p className="hint">{message}</p></div>
+      <div className="async-result">{!selected ? <div className="empty">尚无异步请求</div> : <><div><Status value={selected.status} /><code>{short(selected.id, 18)}</code></div><small>Kafka {selected.kafkaPartition === undefined ? "等待投递" : `P${selected.kafkaPartition} / O${selected.kafkaOffset}`}</small><small>收到 {selected.receivedCount} 次 · 业务执行 {selected.businessExecutions} 次</small>{selected.orderId && <small>订单 {short(selected.orderId, 18)}</small>}{selected.lastError && <b>{selected.lastError}</b>}</>}</div>
+      <div className="delivery-mini"><b>消息证据</b>{evidence.length === 0 ? <small>等待消费者处理</small> : evidence.slice(-4).map(value => <small key={value.id}>#{value.attempt} P{value.kafkaPartition}/O{value.kafkaOffset} · {value.outcome}</small>)}</div></div>
+  </section>;
 }
 
 function ClientPage({ data }: { data: LiveData }) {
@@ -168,12 +212,34 @@ function ClientPage({ data }: { data: LiveData }) {
   return <Shell view="client" data={data}>
     <section className="client-hero"><div><span className="pill">到店美食 · 随时退</span><h2>双人招牌套餐</h2><p>模拟生活服务交易：库存预占、支付回调、取消退款与最终一致性。</p><div className="price"><strong>¥39.90</strong><del>¥68</del></div></div><div className={`stock-card ${!item || item.available === 0 ? "sold" : ""}`}><small>数据库实时库存</small><strong>{item ? item.available : "已删除"}</strong><span>{item ? `已预占 ${item.reserved}` : "后台不存在该 SKU"}</span></div></section>
     <div className={`notice ${message.includes("失败") || message.includes("Unknown") ? "danger" : ""}`}>{message}</div>
+    <AsyncCheckout data={data} />
     <section className="client-grid">
       <article className="panel checkout"><div className="panel-title"><div><p>CHECKOUT</p><h2>确认订单</h2></div><span className="tag">{DEMO_SKU}</span></div><label>幂等键<input value={idempotencyKey} onChange={event => setIdempotencyKey(event.target.value)} /></label><div className="order-fields"><div><span>购买数量</span><b>1 份</b></div><div><span>订单金额</span><b>¥39.90</b></div><div><span>库存状态</span><b>{!item ? "商品已删除" : item.available === 0 ? "售罄，可强制尝试" : "可下单"}</b></div></div><button className="primary" disabled={busy} onClick={() => create(false)}>{item && item.available > 0 ? "提交订单并预占库存" : "尝试下单并观察失败"}</button><div className="actions"><button disabled={!selected || busy} onClick={() => create(true)}>重放相同请求</button><button disabled={!selected?.paymentId || busy} onClick={() => pay(false)}>正常支付</button><button disabled={!selected?.paymentId || busy} onClick={() => pay(true)}>支付但丢回调</button><button disabled={!selected || busy} onClick={reconcile}>主动对账</button><button disabled={!selected || selected.status !== "PENDING_PAYMENT" || busy} onClick={() => change("cancel")}>取消并释放库存</button><button disabled={!selected || selected.status !== "PAID" || busy} onClick={() => change("refund")}>退款补偿</button></div></article>
       <article className="panel"><div className="panel-title"><div><p>MY ORDERS</p><h2>我的订单</h2></div><span className="tag">{data.orders.length} 条</span></div><div className="order-list">{data.orders.length === 0 && <div className="empty">暂无订单</div>}{data.orders.map(order => <button key={order.id} onClick={() => { setSelectedId(order.id); localStorage.setItem("bill-selected-order", order.id); }} className={selected?.id === order.id ? "chosen" : ""}><Status value={order.status} /><b>双人招牌套餐 × {order.quantity}</b><small>{short(order.id)} · ¥{order.amount}</small></button>)}</div></article>
     </section>
     {selected && <section className="panel timeline-panel"><div className="panel-title"><div><p>ORDER TIMELINE</p><h2>订单状态与证据</h2></div><Status value={selected.status} /></div><div className="order-summary"><code>{selected.id}</code><span>Trace {selected.traceId}</span>{selected.failureReason && <b>{selected.failureReason}</b>}</div><div className="timeline">{trace.length === 0 ? <div className="empty">等待业务事件</div> : trace.map(event => <div key={event.id} className={event.outcome === "FAILED" ? "failed" : ""}><i></i><span>{clock(event.occurredAt)}</span><b>{event.operation}</b><small>{event.outcome} · {event.durationMs}ms · {event.detail}</small></div>)}</div></section>}
   </Shell>;
+}
+
+function KafkaLab({ data }: { data: LiveData }) {
+  const [selectedId, setSelectedId] = useState("");
+  const [message, setMessage] = useState("暂停消费者后制造积压，可看到 Lag 上升；恢复后可观察排空。 ");
+  const [busy, setBusy] = useState(false);
+  const request = data.asyncRequests.find(value => value.id === selectedId) || data.asyncRequests[0];
+  const deliveries = request ? data.kafkaDeliveries.filter(value => value.requestId === request.id).slice().reverse() : [];
+  async function run(action: () => Promise<unknown>, success: string) { setBusy(true); try { await action(); setMessage(success); await data.refresh(); } catch (error) { setMessage((error as Error).message); } finally { setBusy(false); } }
+  const post = (path: string, success: string) => run(() => jsonPost(path), success);
+  async function createBacklog() {
+    await jsonPost("/api/async-orders/consumer/pause");
+    for (let index = 0; index < 12; index++) await api<AsyncRequest>("/api/async-orders", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ userId: "peak-user", sku: DEMO_SKU, quantity: 1, amount: 39.9 }) });
+  }
+  return <section className="panel kafka-lab">
+    <div className="panel-title"><div><p>KAFKA LAB · REAL BROKER</p><h2>削峰、积压与消息可靠性</h2></div><span className={`broker ${data.kafkaMetrics?.broker === "UP" ? "up" : "down"}`}>Broker {data.kafkaMetrics?.broker || "—"}</span></div>
+    <div className="kafka-metrics"><article><span>Lag</span><strong>{data.kafkaMetrics?.lag ?? 0}</strong><small>LEO − committed offset</small></article><article><span>Outbox</span><strong>{data.kafkaMetrics?.outboxPending ?? 0}</strong><small>待发布 / {data.kafkaMetrics?.outboxPublished ?? 0} 已发布</small></article><article><span>队列中</span><strong>{(data.kafkaMetrics?.queued ?? 0) + (data.kafkaMetrics?.processing ?? 0)}</strong><small>最老 {data.kafkaMetrics?.oldestQueueAgeMs ?? 0} ms</small></article><article><span>死信</span><strong>{data.kafkaMetrics?.deadLetter ?? 0}</strong><small>可人工回放</small></article><article><span>重复消息</span><strong>{data.kafkaMetrics?.duplicates ?? 0}</strong><small>业务只执行一次</small></article><article><span>消费者</span><strong>{data.kafkaMetrics?.consumerPaused ? "PAUSED" : "RUNNING"}</strong><small>延迟 {data.kafkaMetrics?.consumerDelayMs ?? 0} ms</small></article></div>
+    <div className="kafka-actions"><button disabled={busy} onClick={() => post("/api/async-orders/consumer/pause", "消费者已暂停；生产者与 Outbox 仍可写入。")}>暂停消费</button><button disabled={busy} onClick={() => post("/api/async-orders/consumer/resume", "消费者已恢复，观察 Lag 逐步归零。")}>恢复消费</button><button disabled={busy} onClick={() => run(createBacklog, "已暂停消费者并受理 12 个订单，等待 Outbox 发布后刷新查看 Lag。")}>制造 12 个积压</button><button disabled={busy} onClick={() => post("/api/async-orders/faults?failNext=1&delayMs=0", "下一次消费将技术失败并进入有限重试。")}>失败 1 次</button><button disabled={busy} onClick={() => post("/api/async-orders/faults?failNext=3&delayMs=0", "下一条消息连续失败 3 次后进入 DLQ。")}>失败 3 次 → DLQ</button><button disabled={busy} onClick={() => post("/api/async-orders/faults?failNext=0&delayMs=800", "消费者单条处理延迟设为 800ms，用于展示削峰。")}>消费延迟 800ms</button><button disabled={!request || busy} onClick={() => post(`/api/async-orders/${request?.id}/duplicate`, "同一业务消息已重复投递；终态消费者会去重。")}>重复投递所选消息</button><button disabled={!request || request.status !== "DEAD_LETTER" || busy} onClick={() => post(`/api/async-orders/${request?.id}/replay`, "DLQ 消息已人工回放并重新入队。")}>人工回放 DLQ</button><button disabled={busy} onClick={() => post("/api/async-orders/faults?failNext=0&delayMs=0", "Kafka 故障与延迟已清除。")}>清除 Kafka 故障</button></div>
+    <div className="notice">{message}</div>
+    <div className="kafka-evidence"><div><b>分区水位</b><div className="partition-list">{(data.kafkaMetrics?.partitionDetails || []).map(value => <span key={value.partition}>P{value.partition}<small>end {value.endOffset}</small><small>commit {value.committedOffset}</small><em>lag {value.lag}</em></span>)}</div></div><div><b>选择消息查看证据</b><select value={request?.id || ""} onChange={event => setSelectedId(event.target.value)}><option value="">暂无请求</option>{data.asyncRequests.map(value => <option key={value.id} value={value.id}>{short(value.id)} · {value.status}</option>)}</select><div className="delivery-list">{deliveries.length === 0 ? <small>暂无消费记录</small> : deliveries.map(value => <small key={value.id}>{clock(value.occurredAt)} · attempt {value.attempt} · P{value.kafkaPartition}/O{value.kafkaOffset} · <b>{value.outcome}</b></small>)}</div>{request && <p className="hint">received={request.receivedCount}，businessExecutions={request.businessExecutions}。重复投递增加前者，不增加后者。</p>}</div></div>
+  </section>;
 }
 
 function OperationsPage({ data }: { data: LiveData }) {
@@ -190,6 +256,7 @@ function OperationsPage({ data }: { data: LiveData }) {
   return <Shell view="operations" data={data}>
     <section className="service-grid">{[["Order Service", "8785", data.health.order], ["Inventory Service", "8786", data.health.inventory], ["Payment Service", "8787", data.health.payment]].map(([name, port, up]) => <article className="panel service" key={String(name)}><div><i className={up ? "up" : "down"}></i><span>{up ? "UP" : "DOWN"}</span></div><h3>{name}</h3><small>127.0.0.1:{port} · Spring Boot</small></article>)}<article className="panel service"><div><i className={data.circuit?.state === "OPEN" ? "down" : "up"}></i><span>{data.circuit?.state || "—"}</span></div><h3>Payment Circuit</h3><small>失败 {data.circuit?.failedCalls ?? 0} · 拒绝 {data.circuit?.notPermittedCalls ?? 0}</small></article></section>
     <div className="notice">{message}</div>
+    <KafkaLab data={data} />
     <section className="ops-grid">
       <article className="panel"><div className="panel-title"><div><p>TRANSACTION LINK</p><h2>跨服务数据关联</h2></div><select value={selected?.id || ""} onChange={event => { setSelectedId(event.target.value); localStorage.setItem("bill-selected-order", event.target.value); }}><option value="">选择订单</option>{data.orders.map(order => <option key={order.id} value={order.id}>{short(order.id)} · {order.status}</option>)}</select></div>{!selected ? <div className="empty">先在客户端创建订单</div> : <><div className="service-flow"><div><span>ORDER · bill_order</span><Status value={selected.status} /><code>{short(selected.id, 18)}</code></div><b>→</b><div><span>INVENTORY · bill_inventory</span><Status value={reservation?.status || "NONE"} /><code>{reservation ? `${reservation.sku} × ${reservation.quantity}` : "未产生预占"}</code></div><b>→</b><div><span>PAYMENT · bill_payment</span><Status value={payment?.status || "NONE"} /><code>{payment ? short(payment.id, 18) : "未创建支付单"}</code></div></div><OrderStateMachine status={selected.status} /></>}</article>
       <article className="panel faults"><div className="panel-title"><div><p>FAULT CONTROL</p><h2>故障与容错状态</h2></div><button onClick={() => mutate(() => jsonPost("/api/reliability/circuit-breakers/payment/reset"), "支付熔断器已复位。")}>复位熔断器</button></div><div className="fault-row"><span>库存失败</span><b>剩余 {data.inventoryFaults.failNext ?? 0} 次</b><button onClick={() => mutate(() => jsonPost("/inventory-api/faults", { failNext: 1, delayNextMs: 0 }), "下一次库存预占将失败。")}>注入一次</button></div><div className="fault-row"><span>库存延迟</span><b>{data.inventoryFaults.delayNextMs ?? 0} ms</b><button onClick={() => mutate(() => jsonPost("/inventory-api/faults", { failNext: 0, delayNextMs: 2500 }), "下一次库存请求将延迟 2500ms，超过 1200ms 超时边界。")}>注入超时</button></div><div className="fault-row"><span>支付调用失败</span><b>剩余 {data.paymentFaults.failNextCalls ?? 0} 次</b><button onClick={() => mutate(() => jsonPost("/payment-api/faults", { failNextQueries: 0, failNextCalls: 4 }), "接下来四次支付调用将失败，用于打开熔断器。")}>注入四次</button></div><button className="quiet" onClick={() => Promise.all([jsonPost("/inventory-api/faults", { failNext: 0, delayNextMs: 0 }), jsonPost("/payment-api/faults", { failNextQueries: 0, failNextCalls: 0 })]).then(() => data.refresh())}>清除全部故障</button></article>
@@ -201,7 +268,11 @@ function OperationsPage({ data }: { data: LiveData }) {
 }
 
 function PerformancePanel() {
-  return <section className="panel performance"><div className="panel-title"><div><p>LOAD TEST EVIDENCE</p><h2>怎么验收压测</h2></div><span className="tag">k6 · 本地基线 · 2026-09-13</span></div><div className="perf-metrics"><article><span>请求数</span><strong>1,804</strong><small>完整创建订单链路</small></article><article><span>吞吐量</span><strong>45.04</strong><small>requests / second</small></article><article><span>P50</span><strong>139.00 ms</strong><small>一半请求更快</small></article><article><span>P95</span><strong>286.99 ms</strong><small>95% 请求在此内完成</small></article><article><span>P99</span><strong>344.64 ms</strong><small>观察最慢 1%</small></article><article><span>HTTP 失败</span><strong>0%</strong><small>本轮 checks 100%</small></article></div><div className="acceptance-steps"><div><i>1</i><b>压什么</b><p>订单落库 → 库存预占 → 支付单创建 → Trace 记录，不是只压一个空接口。</p></div><div><i>2</i><b>怎么压</b><p>40 秒阶梯加压，最高 20 个虚拟用户；运行 <code>load-test.cmd</code> 可复现。</p></div><div><i>3</i><b>看什么</b><p>先看错误率，再看吞吐量与 P95/P99；数字必须带机器、时长和并发条件。</p></div><div><i>4</i><b>能证明什么</b><p>仅证明这台电脑、单实例 Docker 环境的本地基线，不能外推线上容量或 SLA。</p></div></div></section>;
+  const baselines = [
+    { name: "同步完整订单", scope: "落单 + 库存 + 支付 + Trace", requests: "1,804", rps: "45.04 req/s", p50: "139.00 ms", p95: "286.99 ms" },
+    { name: "Kafka 异步受理", scope: "202 + request + Outbox", requests: "4,254", rps: "106.18 req/s", p50: "33.31 ms", p95: "56.12 ms" },
+  ];
+  return <section className="panel performance"><div className="panel-title"><div><p>LOAD TEST EVIDENCE</p><h2>同步完整链路 vs Kafka 受理</h2></div><span className="tag">k6 · 40秒 · 最高20 VU · 错误率均为0%</span></div><div className="perf-compare">{baselines.map(value => <article key={value.name}><div><b>{value.name}</b><small>{value.scope}</small></div><section><span>请求<strong>{value.requests}</strong></span><span>吞吐<strong>{value.rps}</strong></span><span>P50<strong>{value.p50}</strong></span><span>P95<strong>{value.p95}</strong></span></section></article>)}</div><div className="acceptance-steps"><div><i>1</i><b>口径分开</b><p>同步成功代表订单链路完成；异步成功只代表 HTTP 202 可靠受理，二者不能直接排名。</p></div><div><i>2</i><b>积压可见</b><p>异步压测同时观察 Outbox Pending、Kafka Lag 和最老请求年龄，不能只看接口 P95。</p></div><div><i>3</i><b>最终核对</b><p>等待 Outbox 与 Lag 归零，再核对 4,254 条请求全部 SUCCEEDED；整批约 362 秒收敛。</p></div><div><i>4</i><b>结论边界</b><p>Kafka 把峰值变成排队时间，不增加热点库存锁的处理能力，也不代表生产 SLA。</p></div></div></section>;
 }
 
 function DatabasePage({ data }: { data: LiveData }) {
@@ -222,6 +293,8 @@ function DatabasePage({ data }: { data: LiveData }) {
       <article className="panel db-control"><div className="panel-title"><div><p>CONSISTENCY LAB</p><h2>支付事实控制</h2></div><span className="schema">bill_payment</span></div><p className="hint">后台只允许状态向前推进。把支付改为成功后，订单仍可能待支付，用主动对账解释最终一致性。</p><div className="payment-actions">{data.payments.length === 0 ? <div className="empty">先在客户端创建订单</div> : data.payments.slice(0, 5).map(payment => <div key={payment.id}><span><code>{short(payment.id)}</code><small>订单 {short(payment.orderId)}</small></span><Status value={payment.status} /><button disabled={busy || payment.status !== "PENDING"} onClick={() => paymentStatus(payment, "SUCCEEDED")}>标记成功</button><button disabled={busy || payment.status !== "SUCCEEDED"} onClick={() => paymentStatus(payment, "REFUNDED")}>标记退款</button></div>)}</div></article>
     </section>
     <DataSection title="订单表" eyebrow="bill_order.orders" columns={["ID", "SKU", "状态", "支付ID", "更新时间"]} rows={data.orders.map(order => [short(order.id, 18), order.sku, <Status value={order.status} />, short(order.paymentId, 18), clock(order.updatedAt)])} />
+    <DataSection title="异步请求表" eyebrow="bill_order.order_requests" columns={["请求ID", "状态", "订单ID", "分区/Offset", "收件/执行", "错误"]} rows={data.asyncRequests.map(value => [short(value.id, 18), <Status value={value.status} />, short(value.orderId, 18), value.kafkaPartition === undefined ? "—" : `P${value.kafkaPartition} / O${value.kafkaOffset}`, `${value.receivedCount} / ${value.businessExecutions}`, value.lastError || "—"])} />
+    <div className="two-tables"><DataSection title="事务 Outbox" eyebrow="bill_order.outbox_events" columns={["事件ID", "请求ID", "状态", "发布次数", "分区/Offset"]} rows={data.outboxEvents.map(value => [short(value.id), short(value.aggregateId), <Status value={value.status} />, value.publishAttempts, value.kafkaPartition === undefined ? "—" : `P${value.kafkaPartition} / O${value.kafkaOffset}`])} /><DataSection title="Kafka 消费证据" eyebrow="bill_order.kafka_deliveries" columns={["请求ID", "Attempt", "结果", "分区/Offset", "时间"]} rows={data.kafkaDeliveries.map(value => [short(value.requestId), value.attempt, <Status value={value.outcome} />, `P${value.kafkaPartition} / O${value.kafkaOffset}`, clock(value.occurredAt)])} /></div>
     <div className="two-tables"><DataSection title="库存表" eyebrow="bill_inventory.inventory_items" columns={["SKU", "可用", "预占"]} rows={data.items.map(value => [value.sku, value.available, value.reserved])} /><DataSection title="库存预占表" eyebrow="bill_inventory.inventory_reservations" columns={["订单ID", "SKU", "数量", "状态"]} rows={data.reservations.map(value => [short(value.orderId), value.sku, value.quantity, <Status value={value.status} />])} /></div>
     <div className="two-tables"><DataSection title="支付表" eyebrow="bill_payment.payments" columns={["支付ID", "订单ID", "金额", "状态"]} rows={data.payments.map(value => [short(value.id), short(value.orderId), `¥${value.amount}`, <Status value={value.status} />])} /><DataSection title="恢复任务表" eyebrow="bill_order.recovery_jobs" columns={["ID", "订单ID", "任务", "状态", "次数"]} rows={data.jobs.map(value => [value.id, short(value.orderId), value.jobType, <Status value={value.status} />, `${value.attempts}/${value.maxAttempts}`])} /></div>
     <section className="panel audit-panel"><div className="panel-title"><div><p>AUDIT EVIDENCE</p><h2>后台操作审计</h2></div><span className="tag">只追加 · 可追溯</span></div><div className="audit-list">{[...data.inventoryAudits, ...data.paymentAudits].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)).length === 0 ? <div className="empty">尚无后台修改</div> : [...data.inventoryAudits, ...data.paymentAudits].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)).map((audit, index) => <div key={`${audit.action}-${audit.id}-${index}`}><span>{clock(audit.occurredAt)}</span><b>{audit.action}</b><code>{audit.sku || short(audit.paymentId)}</code><small>{audit.detail}</small><em>{audit.operatorName}</em></div>)}</div></section>

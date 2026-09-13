@@ -3,6 +3,9 @@ START TRANSACTION;
 
 DELETE FROM recovery_jobs;
 DELETE FROM trace_events;
+DELETE FROM kafka_deliveries;
+DELETE FROM outbox_events;
+DELETE FROM order_requests;
 DELETE FROM bill_inventory.inventory_audit;
 DELETE FROM bill_payment.payment_audit;
 DELETE FROM bill_payment.payments;
