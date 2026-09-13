@@ -85,3 +85,23 @@
 - Kafka 故障未清：运维台点“清除 Kafka 故障”和“恢复消费”。
 - 页面未即时刷新：确认 WebSocket 状态，手动刷新仍会从数据库恢复事实。
 - 只想验证新增能力：运行 `verify-v0.3.1.cmd`；全量回归运行 `verify.cmd`。
+
+## 指标为什么经常是零
+
+### Outbox Pending
+
+Outbox Relay 每 250ms 扫描一次，每批最多发布 25 条。本机正常运行时，单条事件通常来不及在页面刷新前就已从 `PENDING` 变成 `PUBLISHED`，所以 `Outbox = 0` 是健康状态，不代表没有使用 Outbox。数据库台的 Outbox 行、`PUBLISHED`、Partition 和 Offset 才是已走过 Outbox 的持久化证据。
+
+需要专门观察 Pending 时，可在本地实验中先执行 `docker compose stop kafka`，再提交异步订单；此时请求与 Outbox 仍可落库，而 Broker 显示 DOWN、Outbox Pending 上升。执行 `docker compose start kafka` 后等待 Broker 恢复，Relay 会继续发布并使 Pending 归零。该实验会主动制造基础设施不可用，不进入 90 秒主线。
+
+### 持久化恢复任务
+
+只有“支付但丢回调”会创建 `PAYMENT_RECONCILE`，正常支付、库存不足和 Kafka 重复消息不会创建恢复任务。每个不同的待支付订单最多创建一条同类型任务；Job Runner 每 2 秒扫描并自动执行，因此 `PENDING` 往往很短，但完成后的 `SUCCEEDED` 任务仍保存在数据库中。需要增加任务记录时，对多个不同的 `PENDING_PAYMENT` 订单分别执行“支付但丢回调”。
+
+## 演示口径
+
+- Spring Boot 是构建三个 Java 后端服务的框架，不是数据库；MySQL 才是业务数据库。
+- Outbox 为零代表当前没有待发布事件；已发布总数和数据库行证明历史发布。
+- Job 数量不随普通订单增长，只随需要补偿或对账的异常链路增长。
+- Lag 是 Kafka 物理消息进度，队列中是数据库逻辑请求数，两者可能短暂不一致。
+- 恢复普通消费不会自动回放 DLQ；必须选择具体死信后人工回放。

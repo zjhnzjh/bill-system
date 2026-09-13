@@ -65,14 +65,8 @@ start.cmd
 - [v0.3.1 架构说明](docs/ARCHITECTURE_V0.3.1.md)
 - [v0.3.1 面试演示手册](docs/INTERVIEW_DEMO_V0.3.1.md)
 - [v0.3.1 同步/异步性能基线](docs/PERFORMANCE_BASELINE_V0.3.1.md)
-- [v0.2 当前目标与验收基准](BILL_SYSTEM_V0.2.md)
-- [v0.2 实现 Review](docs/REVIEW_V0.2.0.md)
-- [v0.1 原始目标与证据边界](BILL_SYSTEM_V0.1.md)
-- [三分钟演示与追问](docs/INTERVIEW_DEMO.md)
-- [架构与可靠性机制](docs/ARCHITECTURE.md)
-- [v0.1 实现 Review](docs/REVIEW_V0.1.0.md)
-- [k6 性能基线 v0.1](docs/PERFORMANCE_BASELINE_V0.1.md)
 - [测试矩阵](docs/test-matrix.csv)
+- [历史版本归档](history/README.md)
 
 ## 真实性边界
 

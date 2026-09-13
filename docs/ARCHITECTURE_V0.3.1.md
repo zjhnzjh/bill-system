@@ -28,6 +28,8 @@ Client
 
 ## 2. 真实组件与数据所有权
 
+Spring Boot 不是数据库。它是用于构建 Java 后端应用的框架，本项目的 Order、Inventory、Payment 是三个独立 Spring Boot 进程；它们通过 Spring Data JPA 访问 MySQL，通过 HTTP 或 Kafka 协作。MySQL、Kafka、Redis 都是独立基础设施。
+
 | 组件 | 端口/存储 | 负责事实 | 不负责 |
 |---|---|---|---|
 | Web | 3100 | 三个展示界面 | 不保存业务最终事实 |
@@ -71,3 +73,20 @@ WebSocket 从固定定时刷新升级为业务事件通知，事件包含 `event
 - 消费链是至少一次语义，不宣称端到端 exactly-once；正确性来自业务幂等。
 - 支付为模拟服务，不包含渠道签名、资金风控和真实账务。
 - Seata XA 在本版本为 `DESIGN_ONLY`，没有页面伪造，也不算已实现能力。
+
+## 7. 距离生产级的主要差距
+
+| 方向 | 当前面试版 | 生产级通常还需要 |
+|---|---|---|
+| Kafka | 单 Broker、单机 KRaft、3 分区 | 多 Broker、多副本、跨可用区、容量规划、TLS/SASL、ACL、配额和 Topic 治理 |
+| Outbox | 250ms 数据库轮询、单 Relay | CDC/Debezium 或带租约的多实例 Relay、抢占、防并发发布、归档清理和积压告警 |
+| 消费 | 单服务实例、业务幂等、有限重试 | 多实例再均衡验证、Inbox/去重表、毒消息治理、重放审批、顺序与热点 Key 策略 |
+| 数据库 | 单 MySQL 容器、三个 Schema、自动建表 | 独立实例或集群、主从/容灾、备份恢复、Flyway/Liquibase、慢查询和容量治理 |
+| 交易一致性 | 模拟库存与支付、补偿和对账 | 库存预占过期、真实支付签名与账务、退款对账、Saga 编排、资金风控和人工审核 |
+| Job Runner | 单实例轮询、指数退避、人工重跑 | 租约或 `SKIP LOCKED` 抢占、多实例防重、任务分片、告警、优先级和长期归档 |
+| 可观测性 | 自建逻辑 Trace、状态页面 | OpenTelemetry、Jaeger/Tempo、Prometheus/Grafana、结构化日志、告警和 SLO |
+| 安全 | 本地固定账号、模拟 Admin API | RBAC、审计防篡改、密钥管理、传输加密、数据脱敏、接口签名和安全测试 |
+| 交付 | Docker Compose、本机 CMD 验收 | CI/CD、Kubernetes、滚动/灰度发布、配置中心、回滚、契约测试和环境隔离 |
+| 测试 | 接口/集成/可靠性 Gate、k6 基线、人工 UI 验收 | Playwright UI 回归、契约测试、多实例并发、长稳/容量/故障演练和生产影子流量 |
+
+面试版的价值不是假装覆盖上述生产治理，而是把事务 Outbox、至少一次投递下的幂等、Lag、DLQ、状态机、Trace 和最终一致性做成可运行、可注入、可核验的最小闭环。
