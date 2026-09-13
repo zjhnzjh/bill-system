@@ -9,5 +9,15 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo Verification succeeded.
+echo v0.1 reliability verification succeeded.
+echo.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\v0.2-integration-test.ps1"
+if errorlevel 1 (
+  echo.
+  echo v0.2 integration verification failed. Keep this window open and inspect the first failed gate.
+  pause
+  exit /b 1
+)
+echo.
+echo All v0.1 and v0.2 verification succeeded.
 pause

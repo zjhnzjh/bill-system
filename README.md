@@ -1,6 +1,6 @@
 # Bill System
 
-生活服务交易可靠性与测试演示平台。v0.1 的九个可靠性场景已实现并通过本地自动验收，目标与边界见 [BILL_SYSTEM_V0.1.md](BILL_SYSTEM_V0.1.md)。
+生活服务交易可靠性与测试演示平台。v0.2 的三个实时联动界面、真实数据后台和自动验收已经完成，范围与证据见 [Bill System v0.2 目标规划](BILL_SYSTEM_V0.2.md) 与 [v0.2 实现 Review](docs/REVIEW_V0.2.0.md)。
 
 ## 启动
 
@@ -14,10 +14,18 @@ start.cmd
 
 启动器会固定检查端口、构建容器、等待健康检查并打开 <http://127.0.0.1:3100>。停止全部容器使用 `stop.cmd`。
 
-启动后双击 `verify.cmd` 可重复验证全部九类场景；`load-test.cmd` 使用 k6 做阶梯加压。
+启动后双击 `verify.cmd` 会先回归 v0.1 九类可靠性场景，再执行 v0.2 三端联动验收；只验收 v0.2 可双击 `verify-v0.2.cmd`。`load-test.cmd` 使用 k6 做阶梯加压。
 练习或测试后双击 `reset-demo.cmd`，可只清空本项目的模拟交易数据并恢复三种测试库存。
 
-## v0.1 已实现并验证
+## v0.2 三个页面
+
+- 客户端：<http://127.0.0.1:3100/client>
+- 服务端运维台：<http://127.0.0.1:3100/operations>
+- 数据库操作台：<http://127.0.0.1:3100/database>
+
+三个页面通过 WebSocket 接收刷新通知，业务数据仍以三个 MySQL Schema 中的真实记录为准。数据库操作台不提供任意 SQL，而是通过 Inventory/Payment Service 的受控 Admin API 修改数据并追加审计记录。
+
+## v0.2 已实现并验证
 
 - 三个 Spring Boot 服务和独立数据 Schema；
 - React 交易可靠性控制台；
@@ -31,9 +39,17 @@ start.cmd
 - Resilience4j 支付熔断与并发隔离；
 - 取消、退款、库存释放及跨服务状态一致性；
 - 内置 Trace 事件和 Job 控制台。
+- 客户端、服务端运维台、数据库操作台三个独立路由；
+- WebSocket 实时刷新通知、连接状态和自动重连；
+- 库存与支付受控 Admin API、真实落库和操作审计；
+- 跨服务数据关联、订单状态时间线、显式状态机与压测验收解释；
+- v0.2 三端联动六道自动验收 Gate。
 
 ## 面试入口
 
+- [v0.2 当前目标与验收基准](BILL_SYSTEM_V0.2.md)
+- [v0.2 实现 Review](docs/REVIEW_V0.2.0.md)
+- [v0.1 原始目标与证据边界](BILL_SYSTEM_V0.1.md)
 - [三分钟演示与追问](docs/INTERVIEW_DEMO.md)
 - [架构与可靠性机制](docs/ARCHITECTURE.md)
 - [v0.1 实现 Review](docs/REVIEW_V0.1.0.md)

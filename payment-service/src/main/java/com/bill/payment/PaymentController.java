@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
 import java.math.BigDecimal;
 import java.util.Map;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/payments")
@@ -22,11 +23,14 @@ public class PaymentController {
     private final PaymentRepository payments;
     private final RestClient restClient;
     private final PaymentFaults faults;
+    private final PaymentAuditRepository audits;
 
-    public PaymentController(PaymentRepository payments, RestClient.Builder builder, PaymentFaults faults) {
+    public PaymentController(PaymentRepository payments, RestClient.Builder builder, PaymentFaults faults,
+                             PaymentAuditRepository audits) {
         this.payments = payments;
         this.restClient = builder.build();
         this.faults = faults;
+        this.audits = audits;
     }
 
     public record CreatePaymentRequest(
@@ -97,6 +101,44 @@ public class PaymentController {
     @GetMapping("/{paymentId}")
     public Payment byId(@PathVariable String paymentId) {
         return payments.findById(paymentId).orElseThrow(() -> new IllegalArgumentException("Payment not found"));
+    }
+
+    @GetMapping
+    public List<Payment> latest() {
+        return payments.findAll().stream().sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt())).limit(100).toList();
+    }
+
+    @GetMapping("/all")
+    public List<Payment> all() { return latest(); }
+
+    @GetMapping("/admin/audits")
+    public List<PaymentAudit> audits() { return audits.findTop50ByOrderByOccurredAtDesc(); }
+
+    public record AdminStatus(@NotBlank String status, @NotBlank String operator) {}
+
+    @PostMapping("/{paymentId}/admin-status")
+    @Transactional
+    public Payment adminStatus(@PathVariable String paymentId, @Valid @RequestBody AdminStatus request) {
+        var payment = payments.findById(paymentId).orElseThrow(() -> new IllegalArgumentException("Payment not found"));
+        String before = payment.getStatus();
+        switch (request.status()) {
+            case "SUCCEEDED" -> {
+                if (!"PENDING".equals(payment.getStatus()) && !"SUCCEEDED".equals(payment.getStatus())) {
+                    throw new IllegalStateException("A refunded payment cannot return to succeeded");
+                }
+                payment.succeed();
+            }
+            case "REFUNDED" -> {
+                if (!"SUCCEEDED".equals(payment.getStatus()) && !"REFUNDED".equals(payment.getStatus())) {
+                    throw new IllegalStateException("Only a successful payment can be marked refunded");
+                }
+                payment.refund();
+            }
+            default -> throw new IllegalArgumentException("Allowed statuses: SUCCEEDED, REFUNDED");
+        }
+        audits.save(new PaymentAudit(payment.getId(), payment.getOrderId(), "ADMIN_STATUS", request.operator(),
+                before + " -> " + payment.getStatus()));
+        return payment;
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class})

@@ -33,8 +33,12 @@ public class InventoryItem {
         available += quantity;
     }
 
+    public void setAvailable(int value) {
+        if (value < 0) throw new IllegalArgumentException("available stock cannot be negative");
+        this.available = value;
+    }
+
     public String getSku() { return sku; }
     public int getAvailable() { return available; }
     public int getReserved() { return reserved; }
 }
-
