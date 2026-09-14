@@ -34,7 +34,7 @@ Spring Boot 是三个 Java 后端服务使用的应用框架，不是数据库�
 
 ## 快速启动
 
-要求：Windows 11、Docker Desktop，Docker Engine 已启动。首次启动需要下载镜像并构建服务。
+要求：Windows 11，并已安装 Docker Desktop。`start.cmd` 会在需要时自动启动 Docker Desktop，并等待 Docker Engine 就绪；首次启动还需要下载镜像并构建服务。
 
 双击：
 

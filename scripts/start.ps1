@@ -18,13 +18,49 @@ function Test-BillHealth {
     }
 }
 
+function Test-DockerEngine {
+    docker info *> $null
+    return $LASTEXITCODE -eq 0
+}
+
+function Start-DockerEngine {
+    $desktopCandidates = @(
+        (Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\Docker Desktop.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Docker\Docker Desktop.exe')
+    )
+    $desktopPath = $desktopCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+
+    if (-not $desktopPath) {
+        throw 'Docker Engine is not running and Docker Desktop could not be found. Start Docker Desktop manually, then run start.cmd again.'
+    }
+
+    $desktopRunning = Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue
+    if (-not $desktopRunning) {
+        Write-Host 'Docker Engine is not running. Starting Docker Desktop...' -ForegroundColor Yellow
+        Start-Process -FilePath $desktopPath
+    } else {
+        Write-Host 'Docker Desktop is open. Waiting for Docker Engine...' -ForegroundColor Yellow
+    }
+
+    $dockerDeadline = (Get-Date).AddMinutes(3)
+    do {
+        Start-Sleep -Seconds 3
+        if (Test-DockerEngine) {
+            Write-Host 'Docker Engine is ready.' -ForegroundColor Green
+            return
+        }
+    } while ((Get-Date) -lt $dockerDeadline)
+
+    throw 'Docker Desktop was started, but Docker Engine did not become ready within three minutes. Check Docker Desktop for a startup or WSL error.'
+}
+
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'Docker was not found. Install and start Docker Desktop first.'
 }
 
-docker info *> $null
-if ($LASTEXITCODE -ne 0) {
-    throw 'Docker Engine is not running. Start Docker Desktop and wait until it is ready.'
+if (-not (Test-DockerEngine)) {
+    Start-DockerEngine
 }
 
 $running = @(docker compose ps --status running --services 2>$null)
